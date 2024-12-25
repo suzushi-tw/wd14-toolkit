@@ -12,6 +12,7 @@ class DatasetMerger:
             "characters_merged": 0,
             "source_folders": set()
         }
+        self.target_path = None
     
     def merge_character_lists(self, folder_path: str) -> None:
         """Merge all characters_list.json files found in subfolders"""
@@ -19,6 +20,10 @@ class DatasetMerger:
         print(f"Searching for character lists in: {folder_path}")
         
         for json_file in Path(folder_path).rglob("characters_list.json"):
+            # Skip if file is in target directory
+            if self.target_path and self.target_path in json_file.parents:
+                continue
+                
             found_files = True
             print(f"Found character list: {json_file}")
             try:
@@ -32,39 +37,20 @@ class DatasetMerger:
                         print(f"Warning: Invalid format in {json_file}")
             except Exception as e:
                 print(f"Error reading {json_file}: {e}")
-        
-        if not found_files:
-            print(f"Warning: No characters_list.json files found in {folder_path}")
-        else:
-            print(f"Total unique characters found: {len(self.characters)}")
-
-    def save_merged_characters(self, target_path: str) -> None:
-        """Save merged character list to JSON"""
-        try:
-            output_file = Path(target_path) / "merged_characters_list.json"
-            sorted_chars = sorted(list(self.characters))
-            print(f"Saving {len(sorted_chars)} characters to {output_file}")
-            
-            # Ensure target directory exists
-            output_file.parent.mkdir(exist_ok=True)
-            
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(sorted_chars, f, ensure_ascii=False, indent=2)
-            
-            print(f"Successfully saved character list to {output_file}")
-            self.stats["characters_merged"] = len(sorted_chars)
-        except Exception as e:
-            print(f"Error saving character list: {e}")
-            raise
 
     def move_files(self, source_path: str, target_path: str) -> None:
         """Move files from subfolders to target folder with artist prefix"""
         source_path = Path(source_path)
         target_path = Path(target_path)
+        
+        # Skip if target is within source
+        if target_path.is_relative_to(source_path):
+            raise ValueError("Target directory cannot be within source directory")
+            
         target_path.mkdir(exist_ok=True)
 
         for folder in source_path.iterdir():
-            if folder.is_dir():
+            if folder.is_dir() and folder != target_path:
                 artist_name = folder.name
                 for file in folder.rglob("*"):
                     if file.is_file() and not file.name == "characters_list.json":
@@ -84,6 +70,7 @@ class DatasetMerger:
 
     def merge_dataset(self, source_path: str, target_path: str) -> Dict:
         """Main merge function"""
+        self.target_path = Path(target_path)
         self.merge_character_lists(source_path)
         self.move_files(source_path, target_path)
         self.save_merged_characters(target_path)
