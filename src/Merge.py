@@ -38,6 +38,14 @@ class DatasetMerger:
             except Exception as e:
                 print(f"Error reading {json_file}: {e}")
 
+    def save_merged_characters(self, target_path: str) -> None:
+        """Save merged character list to JSON file"""
+        characters_path = Path(target_path) / "characters_list.json"
+        with open(characters_path, 'w', encoding='utf-8') as f:
+            json.dump(list(self.characters), f, ensure_ascii=False, indent=2)
+        print(f"Saved merged characters list to: {characters_path}")
+        self.stats["characters_merged"] = len(self.characters)
+
     def move_files(self, source_path: str, target_path: str) -> None:
         """Move files from subfolders to target folder with artist prefix"""
         source_path = Path(source_path)
