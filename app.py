@@ -13,6 +13,8 @@ from tqdm import tqdm
 from batch_process import batch_process
 from src.validator import ImageValidator 
 from src.Merge import DatasetMerger
+from src.Aesthetic import AestheticScorer
+from src.Batch_aestheitc import AestheticSorter
 
 TITLE = "WaifuDiffusion Tagger"
 
@@ -243,6 +245,7 @@ def main():
     args = parse_args()
     predictor = Predictor()
     validator = ImageValidator()
+    aesthetic_scorer = AestheticScorer()
 
     dropdown_list = [
         SWINV2_MODEL_DSV3_REPO,
@@ -323,6 +326,42 @@ def main():
                     outputs=[sorted_general_strings, rating, character_res, general_res],
                 )
 
+            with gr.TabItem("Aesthetic Scoring"):
+                with gr.Row():
+                    with gr.Column(variant="panel"):
+                        aesthetic_image = gr.Image(
+                            type="pil",
+                            image_mode="RGB",
+                            label="Input Image"
+                        )
+                        score_button = gr.Button(
+                            value="Get Aesthetic Score",
+                            variant="primary",
+                            size="lg"
+                        )
+                    
+                    with gr.Column(variant="panel"):
+                        with gr.Row():
+                            aesthetic_score = gr.Number(
+                                label="Score",
+                                precision=4,
+                                value=None
+                            )
+                            quality_tag = gr.Textbox(
+                                label="Quality Level",
+                                value=None
+                            )
+                            aesthetic_tag = gr.Textbox(
+                                label="Aesthetic Category",
+                                value=None
+                            )
+                        
+                score_button.click(
+                    aesthetic_scorer.get_score,
+                    inputs=[aesthetic_image],
+                    outputs=[aesthetic_score, quality_tag, aesthetic_tag]
+                )
+
             # Batch processing tab
             with gr.TabItem("Batch Processing"):
                 with gr.Column(variant="panel"):
@@ -383,6 +422,59 @@ def main():
                     ],
                     outputs=[batch_output, batch_results]
                 )
+
+            with gr.TabItem("Batch Aesthetic Processing"):
+                with gr.Column(variant="panel"):
+                    batch_source = gr.Textbox(
+                        label="Source Folder Path",
+                        placeholder="Enter folder containing images to sort",
+                        info="Supports jpg, jpeg, png, webp formats including subfolders"
+                    )
+                    batch_target = gr.Textbox(
+                        label="Target Folder Path",
+                        placeholder="Enter folder to sort images into"
+                    )
+                    batch_aesthetic_button = gr.Button(
+                        value="Sort Images by Quality",
+                        variant="primary"
+                    )
+                    batch_aesthetic_output = gr.Textbox(
+                        label="Processing Results",
+                        lines=10
+                    )
+
+                    def format_sort_results(stats):
+                        output = [
+                            f"Processed {stats['total_processed']} images\n",
+                            "\nSorted counts:",
+                        ]
+                        for folder, count in stats['sorted_counts'].items():
+                            output.append(f"  {folder}: {count}")
+                            
+                        if stats['errors']:
+                            output.append("\nErrors:")
+                            for error in stats['errors'][:5]:
+                                output.append(f"  {error}")
+                            if len(stats['errors']) > 5:
+                                output.append(f"  ...and {len(stats['errors'])-5} more errors")
+                                
+                        return "\n".join(output)
+
+                    def sort_and_format(source, target):
+                        if not source or not target:
+                            return "Error: Please enter source and target paths"
+                        try:
+                            sorter = AestheticSorter()
+                            stats = sorter.sort_images(source, target)
+                            return format_sort_results(stats)
+                        except Exception as e:
+                            return f"Error during sorting: {str(e)}"
+
+                    batch_aesthetic_button.click(
+                        sort_and_format,
+                        inputs=[batch_source, batch_target],
+                        outputs=[batch_aesthetic_output]
+                    )
             
             with gr.TabItem("Dataset Validation"):
                 with gr.Column(variant="panel"):
@@ -391,15 +483,32 @@ def main():
                         placeholder="Enter the folder path containing images",
                         info="Supports jpg, jpeg, png, webp formats, including subfolders"
                     )
+                    grayscale_target = gr.Textbox(
+                        label="Grayscale Images Target Folder (optional)",
+                        placeholder="Enter folder path to move grayscale images to",
+                        info="Leave empty to keep files in place"
+                    )
                     validate_button = gr.Button(value="Validate Dataset", variant="primary")
                     validate_output = gr.Textbox(
                         label="Validation Result",
                         lines=10
                     )
 
+                def validate_and_move(path: str, target: str) -> str:
+                    analysis = validator.analyze_dataset(path)
+                    moved_stats = None
+                    
+                    if target and analysis['grayscale_files']:
+                        moved_stats = validator.move_grayscale_images(
+                            analysis['grayscale_files'], 
+                            target
+                        )
+                        
+                    return validator.format_results(analysis, moved_stats)
+
                 validate_button.click(
-                    lambda path: validator.format_results(validator.analyze_dataset(path)),
-                    inputs=[validate_path],
+                    validate_and_move,
+                    inputs=[validate_path, grayscale_target],
                     outputs=[validate_output]
                 )
             

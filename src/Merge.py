@@ -47,7 +47,7 @@ class DatasetMerger:
         self.stats["characters_merged"] = len(self.characters)
 
     def move_files(self, source_path: str, target_path: str) -> None:
-        """Move files from subfolders to target folder with artist prefix"""
+        """Move files from subfolders to target folder, keeping original names where possible"""
         source_path = Path(source_path)
         target_path = Path(target_path)
         
@@ -62,16 +62,20 @@ class DatasetMerger:
                 artist_name = folder.name
                 for file in folder.rglob("*"):
                     if file.is_file() and not file.name == "characters_list.json":
-                        # Create new filename with artist prefix
-                        new_name = f"{artist_name}_{file.name}"
-                        new_path = target_path / new_name
+                        # Try original filename first
+                        new_path = target_path / file.name
                         
-                        # Ensure no overwrites
-                        counter = 1
-                        while new_path.exists():
-                            new_name = f"{artist_name}_{counter}_{file.name}"
+                        # Only add prefix if file already exists
+                        if new_path.exists():
+                            new_name = f"{artist_name}_{file.name}"
                             new_path = target_path / new_name
-                            counter += 1
+                            
+                            # Handle multiple conflicts
+                            counter = 1
+                            while new_path.exists():
+                                new_name = f"{artist_name}_{counter}_{file.name}"
+                                new_path = target_path / new_name
+                                counter += 1
                             
                         shutil.copy2(file, new_path)
                         self.stats["files_moved"] += 1
