@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 import logging
 from contextlib import contextmanager
+import asyncio
+import aiofiles
 
 @contextmanager
 def image_loader(path):
@@ -19,6 +21,10 @@ def image_loader(path):
         yield img
     finally:
         img.close()
+
+async def write_tags_to_file(txt_path, all_tags):
+    async with aiofiles.open(txt_path, 'w', encoding='utf-8') as f:
+        await f.write(', '.join(all_tags))
 
 def process_single_image(img_path, predictor, model_repo, params, manual_tag_list):
     """Process a single image with error handling"""
@@ -44,8 +50,7 @@ def process_single_image(img_path, predictor, model_repo, params, manual_tag_lis
                 all_tags.extend(tags.split(", "))
 
             txt_path = os.path.splitext(img_path)[0] + '.txt'
-            with open(txt_path, 'w', encoding='utf-8') as f:
-                f.write(', '.join(all_tags))
+            asyncio.run(write_tags_to_file(txt_path, all_tags))
 
             return {
                 "file": os.path.basename(img_path),
@@ -100,7 +105,7 @@ def batch_process(
     }
     
     # Parallel processing
-    max_workers = 4 if is_cuda else 2
+    max_workers = min(4, os.cpu_count() * 2)  # Increase workers if system can handle it
     process_func = partial(process_single_image, 
                          predictor=predictor,
                          model_repo=model_repo,
