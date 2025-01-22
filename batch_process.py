@@ -10,17 +10,26 @@ import logging
 from contextlib import contextmanager
 import asyncio
 import aiofiles
+import psutil
+from tqdm import tqdm
+import gc
+import time
 
 @contextmanager
 def image_loader(path):
     """Context manager for proper image handling"""
+    img = None
     try:
         img = Image.open(path)
         if img.mode != 'RGBA':
             img = img.convert('RGBA')
         yield img
+    except Exception as e:
+        logging.error(f"Error loading image {path}: {str(e)}")
+        raise
     finally:
-        img.close()
+        if img is not None:
+            img.close()
 
 async def write_tags_to_file(txt_path, all_tags):
     async with aiofiles.open(txt_path, 'w', encoding='utf-8') as f:
@@ -79,6 +88,7 @@ def batch_process(
     
     results = []
     characters_set = set()
+    errors = []
     predictor.load_model(model_repo)
     
     manual_tag_list = [tag.strip() for tag in manual_tags.split(",") if tag.strip()] if manual_tags else []
@@ -121,6 +131,8 @@ def batch_process(
             if result:
                 results.append(result)
                 characters_set.update(chars)
+            else:
+                errors.append(future_to_img[future])
 
     # Save results
     if results:
@@ -136,10 +148,17 @@ def batch_process(
         status_msg = f"""Processing complete! 
         Processing mode: {cuda_status}
         Total processed: {len(results)} images
+        Failed: {len(errors)} images
         CSV result: {output_path}
         Characters list: {characters_path}
         Created corresponding txt files for each image"""
+        
+        if errors:
+            status_msg += f"\n\nFailed images:\n" + "\n".join(errors[:10])
+            if len(errors) > 10:
+                status_msg += f"\n...and {len(errors) - 10} more"
     else:
         status_msg = "No images were successfully processed"
+        df = pd.DataFrame()  # Ensure df is always assigned
     
     return status_msg, df

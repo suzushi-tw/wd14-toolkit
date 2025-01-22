@@ -15,8 +15,8 @@ class AestheticScorer:
             (0.80, 0.95): "high quality", 
             (0.60, 0.80): "good quality",
             (0.25, 0.60): "normal quality",
-            (0.10, 0.25): "low quality",
-            (0.00, 0.10): "worst quality"
+            (0.5, 0.25): "low quality",
+            (0.00, 0.5): "worst quality"
         }
         
         # Aesthetic thresholds

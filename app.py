@@ -15,28 +15,13 @@ from src.validator import ImageValidator
 from src.Merge import DatasetMerger
 from src.Aesthetic import AestheticScorer
 from src.Batch_aestheitc import AestheticSorter
+from src.config.config import dropdown_list, SWINV2_MODEL_DSV3_REPO
+from src.Handdetector import HandDetector
+from src.Animehanddetector import AnimeHandDetector
 
 TITLE = "WaifuDiffusion Tagger"
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
-
-# Dataset v3 series of models:
-SWINV2_MODEL_DSV3_REPO = "SmilingWolf/wd-swinv2-tagger-v3"
-CONV_MODEL_DSV3_REPO = "SmilingWolf/wd-convnext-tagger-v3"
-VIT_MODEL_DSV3_REPO = "SmilingWolf/wd-vit-tagger-v3"
-VIT_LARGE_MODEL_DSV3_REPO = "SmilingWolf/wd-vit-large-tagger-v3"
-EVA02_LARGE_MODEL_DSV3_REPO = "SmilingWolf/wd-eva02-large-tagger-v3"
-
-# Dataset v2 series of models:
-MOAT_MODEL_DSV2_REPO = "SmilingWolf/wd-v1-4-moat-tagger-v2"
-SWIN_MODEL_DSV2_REPO = "SmilingWolf/wd-v1-4-swinv2-tagger-v2"
-CONV_MODEL_DSV2_REPO = "SmilingWolf/wd-v1-4-convnext-tagger-v2"
-CONV2_MODEL_DSV2_REPO = "SmilingWolf/wd-v1-4-convnextv2-tagger-v2"
-VIT_MODEL_DSV2_REPO = "SmilingWolf/wd-v1-4-vit-tagger-v2"
-
-# IdolSankaku series of models:
-EVA02_LARGE_MODEL_IS_DSV1_REPO = "deepghs/idolsankaku-eva02-large-tagger-v1"
-SWINV2_MODEL_IS_DSV1_REPO = "deepghs/idolsankaku-swinv2-tagger-v1"
 
 # Files to download from the repos
 MODEL_FILENAME = "model.onnx"
@@ -246,27 +231,45 @@ def main():
     predictor = Predictor()
     validator = ImageValidator()
     aesthetic_scorer = AestheticScorer()
-
-    dropdown_list = [
-        SWINV2_MODEL_DSV3_REPO,
-        CONV_MODEL_DSV3_REPO,
-        VIT_MODEL_DSV3_REPO,
-        VIT_LARGE_MODEL_DSV3_REPO,
-        EVA02_LARGE_MODEL_DSV3_REPO,
-        MOAT_MODEL_DSV2_REPO,
-        SWIN_MODEL_DSV2_REPO,
-        CONV_MODEL_DSV2_REPO,
-        CONV2_MODEL_DSV2_REPO,
-        VIT_MODEL_DSV2_REPO,
-        SWINV2_MODEL_IS_DSV1_REPO,
-        EVA02_LARGE_MODEL_IS_DSV1_REPO,
-    ]
+    anime_hand_detector = AnimeHandDetector()
 
     with gr.Blocks(title=TITLE) as demo:
         gr.Markdown(f"<h1 style='text-align: center; margin-bottom: 1rem'>{TITLE}</h1>")
         
         with gr.Tabs():
-            # Single image processing tab
+            with gr.TabItem("Hand Gesture Detection"):
+                with gr.Row():
+                    with gr.Column(variant="panel"):
+                        hand_image = gr.Image(
+                            type="pil",
+                            image_mode="RGB",
+                            label="Input Image"
+                        )
+                        detect_gesture_button = gr.Button(
+                            value="Detect Anime Hand Gestures",
+                            variant="primary",
+                            size="lg"
+                        )
+                    
+                    with gr.Column(variant="panel"):
+                        output_image = gr.Image(
+                            type="pil",
+                            label="Detected Hands"
+                        )
+                        detected_gestures = gr.Json(
+                            label="Detected Gestures"
+                        )
+                        confidence_display = gr.Label(
+                            label="Confidence Scores"
+                        )
+
+                # Update click handler
+                detect_gesture_button.click(
+                    lambda img: anime_hand_detector.detect_gesture(img, debug=True),
+                    inputs=[hand_image],
+                    outputs=[detected_gestures, confidence_display, output_image]
+                )
+
             with gr.TabItem("Single Image Processing"):
                 with gr.Row():
                     with gr.Column(variant="panel"):
