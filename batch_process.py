@@ -44,7 +44,34 @@ def batch_process(
                 if img.mode != 'RGBA':
                     img = img.convert('RGBA')
                 
-                tags, rating, chars, general = predictor.predict(
+                # Initialize variables for character tags from JSON
+                processed_chars_from_json = False
+                json_char_list = []
+                json_path = img_path + '.json' # Assumes JSON file is image_filename.json
+
+                if os.path.exists(json_path):
+                    try:
+                        with open(json_path, 'r', encoding='utf-8') as f_json:
+                            data = json.load(f_json)
+                        
+                        raw_char_tags_from_json = []
+                        if 'tags_character' in data and isinstance(data['tags_character'], list):
+                            raw_char_tags_from_json = data['tags_character']
+                        elif 'tag_string_character' in data and isinstance(data['tag_string_character'], str):
+                            raw_char_tags_from_json = data['tag_string_character'].split()
+                        
+                        if raw_char_tags_from_json:
+                            for tag in raw_char_tags_from_json:
+                                # Sanitize: replace underscores with spaces
+                                sanitized_tag = tag.replace('_', ' ')
+                                json_char_list.append(sanitized_tag)
+                            processed_chars_from_json = True
+                            # print(f"Loaded {len(json_char_list)} character tags from {json_path}")
+                    except Exception as e_json:
+                        print(f"Error reading or parsing JSON {json_path}: {e_json}")
+
+                # Get predictions (rating, general tags, and fallback characters)
+                tags, rating, pred_chars_dict, general = predictor.predict(
                     img,
                     model_repo,
                     general_thresh,
@@ -53,32 +80,48 @@ def batch_process(
                     character_mcut_enabled
                 )
                 
-                if chars:
-                    characters_set.update(chars.keys())
+                current_image_characters = []
+                if processed_chars_from_json and json_char_list: # Prioritize JSON if tags were found
+                    current_image_characters = json_char_list
+                elif pred_chars_dict: # Fallback to predictor's characters
+                    current_image_characters = list(pred_chars_dict.keys())
+                
+                if current_image_characters:
+                    characters_set.update(current_image_characters)
                 
                 txt_path = os.path.splitext(img_path)[0] + '.txt'
                 
-                all_tags = []
+                all_tags_for_txt = []
                 rating_tag = max(rating.items(), key=lambda x: x[1])[0]
-                all_tags.append(rating_tag)
+                all_tags_for_txt.append(rating_tag)
                 if manual_tag_list:
-                    all_tags.extend(manual_tag_list)
-                if chars:
-                    all_tags.extend([k for k, v in chars.items()])
-                if tags:
-                    all_tags.extend(tags.split(", "))
+                    all_tags_for_txt.extend(manual_tag_list)
+                
+                if current_image_characters:
+                    all_tags_for_txt.extend(current_image_characters)
+                
+                if tags: # General tags string from predictor
+                    all_tags_for_txt.extend(tags.split(", "))
 
                 with open(txt_path, 'w', encoding='utf-8') as f:
-                    f.write(', '.join(all_tags))
+                    f.write(', '.join(all_tags_for_txt))
                 
                 results.append({
                     "file": os.path.basename(img_path),
-                    "tags": tags,
+                    "tags": tags, # General tags string from predictor
                     "rating": rating_tag,
-                    "characters": ", ".join([k for k,v in chars.items()]),
+                    "characters": ", ".join(current_image_characters),
                     "processing_mode": cuda_status,
                     "txt_file": os.path.basename(txt_path)
                 })
+
+                # Delete JSON file if it was successfully processed for characters
+                if processed_chars_from_json and os.path.exists(json_path):
+                    try:
+                        os.remove(json_path)
+                        # print(f"Deleted JSON file: {json_path}")
+                    except Exception as e_del:
+                        print(f"Error deleting JSON file {json_path}: {e_del}")
                 
             except Exception as e:
                 print(f"Error processing {img_path}: {str(e)}")
