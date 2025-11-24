@@ -1,0 +1,14 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.5.1+cu124
+torchaudio==2.5.1+cu124
+torchvision==0.20.1+cu124
+
+gradio==5.8.0
+numpy==1.26.4
+onnxruntime-gpu==1.23.2
+pandas==2.2.3
+pillow==11.0.0
+transformers==4.47.1
+aesthetic-predictor-v2-5==2024.12.18.1
+opencv-python==4.11.0.86
+tqdm==4.67.1
