@@ -6,44 +6,11 @@ from batch_process import batch_process
 from src.Merge import DatasetMerger
 TITLE = "WaifuDiffusion Tagger"
 
-def create_interface(predictor, validator, aesthetic_scorer, anime_hand_detector=None, joy_captioner=None, args=None):
+def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None, args=None):
     with gr.Blocks(title=TITLE) as demo:
         gr.Markdown(f"<h1 style='text-align: center; margin-bottom: 1rem'>{TITLE}</h1>")
         
         with gr.Tabs():
-            with gr.TabItem("Hand Gesture Detection"):
-                with gr.Row():
-                    with gr.Column(variant="panel"):
-                        hand_image = gr.Image(
-                            type="pil",
-                            image_mode="RGB",
-                            label="Input Image"
-                        )
-                        detect_gesture_button = gr.Button(
-                            value="Detect Anime Hand Gestures",
-                            variant="primary",
-                            size="lg"
-                        )
-                    
-                    with gr.Column(variant="panel"):
-                        output_image = gr.Image(
-                            type="pil",
-                            label="Detected Hands"
-                        )
-                        detected_gestures = gr.Json(
-                            label="Detected Gestures"
-                        )
-                        confidence_display = gr.Label(
-                            label="Confidence Scores"
-                        )
-
-                # Update click handler
-                detect_gesture_button.click(
-                    lambda img: anime_hand_detector.detect_gesture(img, debug=True),
-                    inputs=[hand_image],
-                    outputs=[detected_gestures, confidence_display, output_image]
-                )
-
             with gr.TabItem("Single Image Processing"):
                 with gr.Row():
                     with gr.Column(variant="panel"):
@@ -180,11 +147,7 @@ def create_interface(predictor, validator, aesthetic_scorer, anime_hand_detector
                             label="Use MCut threshold"
                         )
                     batch_submit = gr.Button(value="Start Batch Processing", variant="primary")
-                    batch_output = gr.Textbox(label="Processing Result")
-                    batch_results = gr.Dataframe(
-                        headers=["file", "tags", "rating", "characters"],
-                        label="Processing Details"
-                    )
+                    batch_output = gr.Textbox(label="Processing Result", lines=20)
 
                 batch_submit.click(
                     lambda *args: batch_process(predictor, *args),
@@ -197,7 +160,7 @@ def create_interface(predictor, validator, aesthetic_scorer, anime_hand_detector
                         batch_character_mcut,
                         manual_tags,
                     ],
-                    outputs=[batch_output, batch_results]
+                    outputs=[batch_output]
                 )
 
             with gr.TabItem("Batch Aesthetic Processing"):
@@ -333,8 +296,8 @@ def create_interface(predictor, validator, aesthetic_scorer, anime_hand_detector
     demo.queue(max_size=10)
     return demo
 
-def launch_interface(predictor, validator, aesthetic_scorer, anime_hand_detector, joy_captioner, args):
-    demo = create_interface(predictor, validator, aesthetic_scorer, anime_hand_detector, joy_captioner, args)
+def launch_interface(predictor, validator, aesthetic_scorer, joy_captioner, args):
+    demo = create_interface(predictor, validator, aesthetic_scorer, joy_captioner, args)
     demo.launch(
         server_name="0.0.0.0",  # Required for Runpod
         server_port=3000,       # Runpod default port

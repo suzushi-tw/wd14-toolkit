@@ -25,3 +25,6 @@ profile_default/
 
 Thumbs.db
 .DS_Store
+
+# Gradio
+.gradio/

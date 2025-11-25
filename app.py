@@ -16,8 +16,6 @@ from src.Merge import DatasetMerger
 from src.Aesthetic import AestheticScorer
 from src.Batch_aestheitc import AestheticSorter
 from src.config.config import dropdown_list, SWINV2_MODEL_DSV3_REPO, PIXAI_TAGGER_V09_REPO
-from src.Handdetector import HandDetector
-# from src.Animehanddetector import AnimeHandDetector
 from frontend import launch_interface
 
 TITLE = "WaifuDiffusion Tagger"
@@ -232,15 +230,12 @@ def main():
     predictor = Predictor()
     validator = ImageValidator()
     aesthetic_scorer = AestheticScorer()
-    anime_hand_detector = None  # Changed: Set to None for now
     joy_captioner = None
 
-    # Fix: Added args as last parameter
     launch_interface(
         predictor, 
         validator, 
         aesthetic_scorer,
-        anime_hand_detector,  # Added missing parameter
         joy_captioner, 
         args
     )

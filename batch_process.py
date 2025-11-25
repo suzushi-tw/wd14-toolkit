@@ -137,11 +137,25 @@ def batch_process(
     with open(characters_path, 'w', encoding='utf-8') as f:
         json.dump(list(characters_set), f, ensure_ascii=False, indent=2)
     
-    status_msg = f"""Processing complete! 
-    Processing mode: {cuda_status}
-    Total processed: {len(results)} images
-    CSV result: {output_path}
-    Characters list: {characters_path}
-    Created corresponding txt files for each image"""
+    # Format detailed results for display
+    detailed_results = []
+    for r in results[:10]:  # Show first 10 as preview
+        detailed_results.append(
+            f"File: {r['file']}\n"
+            f"  Rating: {r['rating']}\n"
+            f"  Characters: {r['characters']}\n"
+            f"  Tags: {r['tags'][:100]}{'...' if len(r['tags']) > 100 else ''}\n"
+        )
     
-    return status_msg, df
+    status_msg = f"""Processing complete! 
+Processing mode: {cuda_status}
+Total processed: {len(results)} images
+CSV result: {output_path}
+Characters list: {characters_path}
+Created corresponding txt files for each image
+
+Preview of first {min(len(results), 10)} results:
+{''.join(detailed_results)}
+{f'...and {len(results) - 10} more results in CSV' if len(results) > 10 else ''}"""
+    
+    return status_msg
