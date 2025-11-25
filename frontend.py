@@ -46,11 +46,18 @@ def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None,
                                 label="Use MCut threshold",
                                 scale=1,
                             )
+                        
+                        use_joy_caption = gr.Checkbox(
+                            value=False,
+                            label="JoyCaption (newbie)",
+                            info="Use JoyCaption 2 for natural language annotation (requires more VRAM)"
+                        )
+
                         with gr.Row():
                             clear = gr.ClearButton(
                                 components=[image, model_repo, general_thresh, 
                                           general_mcut_enabled, character_thresh, 
-                                          character_mcut_enabled],
+                                          character_mcut_enabled, use_joy_caption],
                                 variant="secondary",
                                 size="lg",
                             )
@@ -58,16 +65,31 @@ def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None,
                     
                     with gr.Column(variant="panel"):
                         sorted_general_strings = gr.Textbox(label="Output (string)")
-                        rating = gr.Label(label="Rating")
-                        character_res = gr.Label(label="Output (characters)")
-                        general_res = gr.Label(label="Output (tags)")
-                        clear.add([sorted_general_strings, rating, character_res, general_res])
+                        rating = gr.Textbox(label="Rating")
+                        character_res = gr.Textbox(label="Output (characters)")
+                        general_res = gr.Textbox(label="Output (tags)", lines=5)
+                        joy_caption_output = gr.Textbox(label="JoyCaption Output", lines=5)
+                        clear.add([sorted_general_strings, rating, character_res, general_res, joy_caption_output])
+
+                def process_image(image, model_repo, general_thresh, general_mcut_enabled, character_thresh, character_mcut_enabled, use_joy_caption):
+                    sorted_general_strings, rating_str, character_str, general_str = predictor.predict(
+                        image, model_repo, general_thresh, general_mcut_enabled, character_thresh, character_mcut_enabled
+                    )
+                    
+                    joy_caption_res = ""
+                    if use_joy_caption and joy_captioner:
+                        try:
+                            joy_caption_res = joy_captioner.predict(image, tags=sorted_general_strings)
+                        except Exception as e:
+                            joy_caption_res = f"Error generating caption: {str(e)}"
+                            
+                    return sorted_general_strings, rating_str, character_str, general_str, joy_caption_res
 
                 submit.click(
-                    predictor.predict,
+                    process_image,
                     inputs=[image, model_repo, general_thresh, general_mcut_enabled,
-                           character_thresh, character_mcut_enabled],
-                    outputs=[sorted_general_strings, rating, character_res, general_res],
+                           character_thresh, character_mcut_enabled, use_joy_caption],
+                    outputs=[sorted_general_strings, rating, character_res, general_res, joy_caption_output],
                 )
 
             with gr.TabItem("Aesthetic Scoring"):

@@ -1,5 +1,6 @@
 import argparse
 import os
+from dotenv import load_dotenv
 
 import gradio as gr
 import huggingface_hub
@@ -15,12 +16,16 @@ from src.validator import ImageValidator
 from src.Merge import DatasetMerger
 from src.Aesthetic import AestheticScorer
 from src.Batch_aestheitc import AestheticSorter
+from src.JoyCaption import JoyCaptioner
 from src.config.config import dropdown_list, SWINV2_MODEL_DSV3_REPO, PIXAI_TAGGER_V09_REPO
 from frontend import launch_interface
 
+# Load environment variables from .env file
+load_dotenv()
+
 TITLE = "WaifuDiffusion Tagger"
 
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # Files to download from the repos
 MODEL_FILENAME = "model.onnx"
@@ -87,15 +92,18 @@ class Predictor:
         self.last_loaded_repo = None
 
     def download_model(self, model_repo):
+        # Use env var if set, otherwise use cached token from huggingface-cli login
+        token = HF_TOKEN if HF_TOKEN else True
+        
         csv_path = huggingface_hub.hf_hub_download(
             model_repo,
             LABEL_FILENAME,
-            use_auth_token=HF_TOKEN,
+            token=token,
         )
         model_path = huggingface_hub.hf_hub_download(
             model_repo,
             MODEL_FILENAME,
-            use_auth_token=HF_TOKEN,
+            token=token,
         )
         return csv_path, model_path
 
@@ -223,14 +231,23 @@ class Predictor:
             ", ".join(sorted_general_strings).replace("(", "\\(").replace(")", "\\)")
         )
 
-        return sorted_general_strings, rating, character_res, general_res 
+        # Format rating as string
+        rating_str = ", ".join([f"{k}: {v:.3f}" for k, v in rating.items()])
+        
+        # Format character results as string
+        character_str = ", ".join([f"{k}: {v:.3f}" for k, v in sorted(character_res.items(), key=lambda x: x[1], reverse=True)])
+        
+        # Format general results as string
+        general_str = ", ".join([f"{k}: {v:.3f}" for k, v in sorted(general_res.items(), key=lambda x: x[1], reverse=True)])
+
+        return sorted_general_strings, rating_str, character_str, general_str 
 
 def main():
     args = parse_args()
     predictor = Predictor()
     validator = ImageValidator()
     aesthetic_scorer = AestheticScorer()
-    joy_captioner = None
+    joy_captioner = JoyCaptioner()
 
     launch_interface(
         predictor, 
