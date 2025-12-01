@@ -2,21 +2,15 @@ import argparse
 import os
 from dotenv import load_dotenv
 
-import gradio as gr
-import huggingface_hub
 import numpy as np
 import onnxruntime as rt
 import pandas as pd
 from PIL import Image
-import glob
-from pathlib import Path
-from tqdm import tqdm
-from batch_process import batch_process
+
 from src.validator import ImageValidator 
-from src.Merge import DatasetMerger
 from src.Aesthetic import AestheticScorer
-from src.Batch_aestheitc import AestheticSorter
 from src.JoyCaption import JoyCaptioner
+from src.PixAI import PixAITagger
 from src.config.config import dropdown_list, SWINV2_MODEL_DSV3_REPO, PIXAI_TAGGER_V09_REPO
 from frontend import launch_interface
 
@@ -24,7 +18,6 @@ from frontend import launch_interface
 load_dotenv()
 
 TITLE = "WaifuDiffusion Tagger"
-
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # Files to download from the repos
@@ -61,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score-character-threshold", type=float, default=0.85)
     return parser.parse_args()
 
-def load_labels(dataframe) -> list[str]:
+def load_labels(dataframe) -> tuple[list[str], list[int], list[int], list[int]]:
     name_series = dataframe["name"]
     name_series = name_series.map(
         lambda x: x.replace("_", " ") if x not in kaomojis else x
@@ -87,73 +80,101 @@ def mcut_threshold(probs):
     return thresh
 
 class Predictor:
+    """Unified predictor for ONNX and PyTorch models"""
+    
     def __init__(self):
         self.model_target_size = None
         self.last_loaded_repo = None
-
-    def download_model(self, model_repo):
-        # Use env var if set, otherwise use cached token from huggingface-cli login
-        token = HF_TOKEN if HF_TOKEN else True
+        self.model = None
+        self.tag_names = []
+        self.rating_indexes = []
+        self.general_indexes = []
+        self.character_indexes = []
         
-        csv_path = huggingface_hub.hf_hub_download(
-            model_repo,
-            LABEL_FILENAME,
-            token=token,
-        )
-        model_path = huggingface_hub.hf_hub_download(
-            model_repo,
-            MODEL_FILENAME,
-            token=token,
-        )
-        return csv_path, model_path
+        # PixAI tagger instance (lazy loaded)
+        self.pixai_tagger = None
+
+    def is_pixai_model(self, model_repo):
+        """Check if the model is a PixAI PyTorch model"""
+        return "pixai" in model_repo.lower()
 
     def load_model(self, model_repo):
+        """Load model (either ONNX or PixAI PyTorch)"""
         if model_repo == self.last_loaded_repo:
             return
 
-        csv_path, model_path = self.download_model(model_repo)
-        
-        # Set model target size (this is a key fix)
-        self.model_target_size = 448  # or 224, depending on the model
-        
-        tags_df = pd.read_csv(csv_path)
-        sep_tags = load_labels(tags_df)
-
-        self.tag_names = sep_tags[0]
-        self.rating_indexes = sep_tags[1]
-        self.general_indexes = sep_tags[2]
-        self.character_indexes = sep_tags[3]
-
-        # First check available execution providers
-        available_providers = rt.get_available_providers()
-        print(f"Available providers: {available_providers}")
-
-        # Choose providers based on availability
-        if 'CUDAExecutionProvider' in available_providers:
-            providers = [
-                ('CUDAExecutionProvider', {
-                    'device_id': 0,
-                    'arena_extend_strategy': 'kNextPowerOfTwo',
-                    'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
-                    'cudnn_conv_algo_search': 'EXHAUSTIVE',
-                    'do_copy_in_default_stream': True,
-                }),
-                'CPUExecutionProvider',
-            ]
+        if self.is_pixai_model(model_repo):
+            # Load PixAI model
+            if self.pixai_tagger is None:
+                self.pixai_tagger = PixAITagger(model_repo)
+            self.pixai_tagger.load_model(token=HF_TOKEN)
+            self.last_loaded_repo = model_repo
         else:
-            providers = ['CPUExecutionProvider']
+            # Load ONNX model
+            import huggingface_hub
+            
+            self.model_target_size = 448
+            
+            # Download files
+            token = HF_TOKEN if HF_TOKEN else True
+            csv_path = huggingface_hub.hf_hub_download(
+                model_repo,
+                LABEL_FILENAME,
+                token=token,
+            )
+            model_path = huggingface_hub.hf_hub_download(
+                model_repo,
+                MODEL_FILENAME,
+                token=token,
+            )
+            
+            # Load tags
+            tags_df = pd.read_csv(csv_path)
+            sep_tags = load_labels(tags_df)
 
-        self.model = rt.InferenceSession(model_path, providers=providers)
-        self.last_loaded_repo = model_repo
+            self.tag_names = sep_tags[0]
+            self.rating_indexes = sep_tags[1]
+            self.general_indexes = sep_tags[2]
+            self.character_indexes = sep_tags[3]
+
+            # Load ONNX model
+            available_providers = rt.get_available_providers()
+            print(f"Available providers: {available_providers}")
+
+            if 'CUDAExecutionProvider' in available_providers:
+                providers = [
+                    ('CUDAExecutionProvider', {
+                        'device_id': 0,
+                        'arena_extend_strategy': 'kNextPowerOfTwo',
+                        'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
+                        'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                        'do_copy_in_default_stream': True,
+                    }),
+                    'CPUExecutionProvider',
+                ]
+            else:
+                providers = ['CPUExecutionProvider']
+
+            self.model = rt.InferenceSession(model_path, providers=providers)
+            self.last_loaded_repo = model_repo
     
     def prepare_image(self, image):
-        target_size = self.model_target_size
-
-        canvas = Image.new("RGBA", image.size, (255, 255, 255))
-        canvas.alpha_composite(image)
-        image = canvas.convert("RGB")
+        """Prepare image for ONNX inference"""
+        # Convert to RGB
+        if image.mode == "RGBA":
+            canvas = Image.new("RGB", image.size, (255, 255, 255))
+            canvas.paste(image, mask=image.split()[3])
+            image = canvas
+        elif image.mode == "P":
+            image = image.convert("RGBA")
+            canvas = Image.new("RGB", image.size, (255, 255, 255))
+            canvas.paste(image, mask=image.split()[3])
+            image = canvas
+        else:
+            image = image.convert("RGB")
 
         # Pad image to square
+        target_size = self.model_target_size
         image_shape = image.size
         max_dim = max(image_shape)
         pad_left = (max_dim - image_shape[0]) // 2
@@ -166,15 +187,13 @@ class Predictor:
         if max_dim != target_size:
             padded_image = padded_image.resize(
                 (target_size, target_size),
-                Image.BICUBIC,
+                Image.Resampling.BICUBIC,
             )
 
         # Convert to numpy array
         image_array = np.asarray(padded_image, dtype=np.float32)
-
         # Convert PIL-native RGB to BGR
         image_array = image_array[:, :, ::-1]
-
         return np.expand_dims(image_array, axis=0)
 
     def predict(
@@ -186,61 +205,78 @@ class Predictor:
         character_thresh,
         character_mcut_enabled,
     ):
+        """Predict tags for an image"""
         self.load_model(model_repo)
 
-        image = self.prepare_image(image)
+        if self.is_pixai_model(model_repo):
+            # Use PixAI tagger
+            result = self.pixai_tagger.predict(
+                image,
+                general_threshold=general_thresh,
+                character_threshold=character_thresh,
+            )
+            
+            # Format output to match expected format
+            sorted_general_string, character_str, general_str = self.pixai_tagger.format_tags(
+                result['general_tags'],
+                result['character_tags'],
+                include_scores=True
+            )
+            
+            # PixAI doesn't have ratings, return empty
+            rating_str = "No rating available for PixAI model"
+            
+            return sorted_general_string, rating_str, character_str, general_str
+        else:
+            # ONNX inference
+            image_array = self.prepare_image(image)
+            input_name = self.model.get_inputs()[0].name
+            label_name = self.model.get_outputs()[0].name
+            preds = self.model.run([label_name], {input_name: image_array})[0][0]
 
-        input_name = self.model.get_inputs()[0].name
-        label_name = self.model.get_outputs()[0].name
-        preds = self.model.run([label_name], {input_name: image})[0]
+            labels = list(zip(self.tag_names, preds.astype(float)))
 
-        labels = list(zip(self.tag_names, preds[0].astype(float)))
+            # Ratings
+            ratings_names = [labels[i] for i in self.rating_indexes]
+            rating = dict(ratings_names)
 
-        # First 4 labels are actually ratings: pick one with argmax
-        ratings_names = [labels[i] for i in self.rating_indexes]
-        rating = dict(ratings_names)
+            # General tags
+            general_names = [labels[i] for i in self.general_indexes]
 
-        # Then we have general tags: pick any where prediction confidence > threshold
-        general_names = [labels[i] for i in self.general_indexes]
+            if general_mcut_enabled:
+                general_probs = np.array([x[1] for x in general_names])
+                general_thresh = mcut_threshold(general_probs)
 
-        if general_mcut_enabled:
-            general_probs = np.array([x[1] for x in general_names])
-            general_thresh = mcut_threshold(general_probs)
+            general_res = [x for x in general_names if x[1] > general_thresh]
+            general_res = dict(general_res)
 
-        general_res = [x for x in general_names if x[1] > general_thresh]
-        general_res = dict(general_res)
+            # Character tags
+            character_names = [labels[i] for i in self.character_indexes]
 
-        # Everything else is characters: pick any where prediction confidence > threshold
-        character_names = [labels[i] for i in self.character_indexes]
+            if character_mcut_enabled:
+                character_probs = np.array([x[1] for x in character_names])
+                character_thresh = mcut_threshold(character_probs)
+                character_thresh = max(0.15, character_thresh)
 
-        if character_mcut_enabled:
-            character_probs = np.array([x[1] for x in character_names])
-            character_thresh = mcut_threshold(character_probs)
-            character_thresh = max(0.15, character_thresh)
+            character_res = [x for x in character_names if x[1] > character_thresh]
+            character_res = dict(character_res)
 
-        character_res = [x for x in character_names if x[1] > character_thresh]
-        character_res = dict(character_res)
+            # Format output
+            sorted_general_strings = sorted(
+                general_res.items(),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            sorted_general_strings = [x[0] for x in sorted_general_strings]
+            sorted_general_strings = (
+                ", ".join(sorted_general_strings).replace("(", "\\(").replace(")", "\\)")
+            )
 
-        sorted_general_strings = sorted(
-            general_res.items(),
-            key=lambda x: x[1],
-            reverse=True,
-        )
-        sorted_general_strings = [x[0] for x in sorted_general_strings]
-        sorted_general_strings = (
-            ", ".join(sorted_general_strings).replace("(", "\\(").replace(")", "\\)")
-        )
+            rating_str = ", ".join([f"{k}: {v:.3f}" for k, v in rating.items()])
+            character_str = ", ".join([f"{k}: {v:.3f}" for k, v in sorted(character_res.items(), key=lambda x: x[1], reverse=True)])
+            general_str = ", ".join([f"{k}: {v:.3f}" for k, v in sorted(general_res.items(), key=lambda x: x[1], reverse=True)])
 
-        # Format rating as string
-        rating_str = ", ".join([f"{k}: {v:.3f}" for k, v in rating.items()])
-        
-        # Format character results as string
-        character_str = ", ".join([f"{k}: {v:.3f}" for k, v in sorted(character_res.items(), key=lambda x: x[1], reverse=True)])
-        
-        # Format general results as string
-        general_str = ", ".join([f"{k}: {v:.3f}" for k, v in sorted(general_res.items(), key=lambda x: x[1], reverse=True)])
-
-        return sorted_general_strings, rating_str, character_str, general_str 
+            return sorted_general_strings, rating_str, character_str, general_str 
 
 def main():
     args = parse_args()
@@ -253,7 +289,7 @@ def main():
         predictor, 
         validator, 
         aesthetic_scorer,
-        joy_captioner, 
+        joy_captioner,
         args
     )
 

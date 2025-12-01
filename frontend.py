@@ -3,18 +3,23 @@ import os
 from src.config.config import dropdown_list, SWINV2_MODEL_DSV3_REPO
 from src.Batch_aestheitc import AestheticSorter
 from batch_process import batch_process
+from batch_joy_caption import batch_joy_caption
 from src.Merge import DatasetMerger
 TITLE = "WaifuDiffusion Tagger"
 
-def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None, args=None):
+def create_interface(predictor, validator, aesthetic_scorer, joy_captioner, args=None):
+    # Ensure args is not None (should always be provided)
+    if args is None:
+        raise ValueError("args parameter is required")
+    
     with gr.Blocks(title=TITLE) as demo:
         gr.Markdown(f"<h1 style='text-align: center; margin-bottom: 1rem'>{TITLE}</h1>")
         
         with gr.Tabs():
-            with gr.TabItem("Single Image Processing"):
+            with gr.Tab("Single Image Processing"):
                 with gr.Row():
                     with gr.Column(variant="panel"):
-                        image = gr.Image(type="pil", image_mode="RGBA", label="Input")
+                        image = gr.Image(type="pil", label="Input")
                         model_repo = gr.Dropdown(
                             dropdown_list,
                             value=SWINV2_MODEL_DSV3_REPO,
@@ -49,18 +54,27 @@ def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None,
                         
                         use_joy_caption = gr.Checkbox(
                             value=False,
-                            label="JoyCaption (newbie)",
-                            info="Use JoyCaption 2 for natural language annotation (requires more VRAM)"
+                            label="Use JoyCaption instead of tagger",
+                            info="When checked, only JoyCaption runs (saves VRAM by not loading tagger)"
                         )
+                        
+                        with gr.Row(visible=False) as joy_settings:
+                            joy_caption_type = gr.Dropdown(
+                                choices=["Descriptive", "Descriptive (Informal)", "Training Prompt", "MidJourney", 
+                                        "Booru tag list", "Booru-like tag list", "Art Critic", "Product Listing", "Social Media Post"],
+                                value="Descriptive",
+                                label="Caption Type"
+                            )
+                            joy_caption_length = gr.Dropdown(
+                                choices=["any", "very short", "short", "medium-length", "long", "very long"] +
+                                        [str(i) for i in range(20, 261, 10)],
+                                value="long",
+                                label="Caption Length",
+                                info="Select length preset or specific word count"
+                            )
 
                         with gr.Row():
-                            clear = gr.ClearButton(
-                                components=[image, model_repo, general_thresh, 
-                                          general_mcut_enabled, character_thresh, 
-                                          character_mcut_enabled, use_joy_caption],
-                                variant="secondary",
-                                size="lg",
-                            )
+                            clear = gr.Button("Clear", variant="secondary", size="lg")
                             submit = gr.Button(value="Submit", variant="primary", size="lg")
                     
                     with gr.Column(variant="panel"):
@@ -69,35 +83,53 @@ def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None,
                         character_res = gr.Textbox(label="Output (characters)")
                         general_res = gr.Textbox(label="Output (tags)", lines=5)
                         joy_caption_output = gr.Textbox(label="JoyCaption Output", lines=5)
-                        clear.add([sorted_general_strings, rating, character_res, general_res, joy_caption_output])
 
-                def process_image(image, model_repo, general_thresh, general_mcut_enabled, character_thresh, character_mcut_enabled, use_joy_caption):
-                    sorted_general_strings, rating_str, character_str, general_str = predictor.predict(
-                        image, model_repo, general_thresh, general_mcut_enabled, character_thresh, character_mcut_enabled
-                    )
-                    
-                    joy_caption_res = ""
-                    if use_joy_caption and joy_captioner:
+                def process_image(image, model_repo, general_thresh, general_mcut_enabled, character_thresh, character_mcut_enabled, 
+                                use_joy, joy_type, joy_length):
+                    if use_joy:
+                        # Only run JoyCaption
                         try:
-                            joy_caption_res = joy_captioner.predict(image, tags=sorted_general_strings)
+                            caption = joy_captioner.predict(image, caption_type=joy_type, caption_length=joy_length)
+                            return "", "", "", "", caption
                         except Exception as e:
-                            joy_caption_res = f"Error generating caption: {str(e)}"
-                            
-                    return sorted_general_strings, rating_str, character_str, general_str, joy_caption_res
+                            return "", "", "", "", f"Error: {str(e)}"
+                    else:
+                        # Only run tagger
+                        sorted_general_strings, rating_str, character_str, general_str = predictor.predict(
+                            image, model_repo, general_thresh, general_mcut_enabled, character_thresh, character_mcut_enabled
+                        )
+                        return sorted_general_strings, rating_str, character_str, general_str, ""
+
+                def clear_inputs():
+                    return None, SWINV2_MODEL_DSV3_REPO, args.score_general_threshold, False, args.score_character_threshold, False, \
+                           False, "Descriptive", "long", "", "", "", "", ""
+                
+                use_joy_caption.change(
+                    lambda x: gr.update(visible=x),
+                    inputs=[use_joy_caption],
+                    outputs=[joy_settings]
+                )
 
                 submit.click(
                     process_image,
                     inputs=[image, model_repo, general_thresh, general_mcut_enabled,
-                           character_thresh, character_mcut_enabled, use_joy_caption],
+                           character_thresh, character_mcut_enabled, use_joy_caption, joy_caption_type, joy_caption_length],
                     outputs=[sorted_general_strings, rating, character_res, general_res, joy_caption_output],
                 )
+                
+                clear.click(
+                    clear_inputs,
+                    inputs=[],
+                    outputs=[image, model_repo, general_thresh, general_mcut_enabled, 
+                            character_thresh, character_mcut_enabled, use_joy_caption, joy_caption_type, joy_caption_length,
+                            sorted_general_strings, rating, character_res, general_res, joy_caption_output],
+                )
 
-            with gr.TabItem("Aesthetic Scoring"):
+            with gr.Tab("Aesthetic Scoring"):
                 with gr.Row():
                     with gr.Column(variant="panel"):
                         aesthetic_image = gr.Image(
                             type="pil",
-                            image_mode="RGB",
                             label="Input Image"
                         )
                         score_button = gr.Button(
@@ -129,63 +161,126 @@ def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None,
                 )
 
             # Batch processing tab
-            with gr.TabItem("Batch Processing"):
-                with gr.Column(variant="panel"):
-                    folder_path = gr.Textbox(
-                        label="Image Folder Path",
-                        placeholder="Enter the folder path containing images",
-                        info="Supports jpg, jpeg, png, webp, webm formats"
-                    )
-                    manual_tags = gr.Textbox(
-                        label="Manual Tags",
-                        placeholder="Enter tags to add, separated by commas (e.g., masterpiece, aesthetic)",
-                        info="These tags will be added to the beginning of all image tags"
-                    )
-                    batch_model = gr.Dropdown(
-                        dropdown_list,
-                        value=SWINV2_MODEL_DSV3_REPO,
-                        label="Model",
-                    )
-                    with gr.Row():
-                        batch_general_thresh = gr.Slider(
-                            0, 1,
-                            step=args.score_slider_step,
-                            value=args.score_general_threshold,
-                            label="General Tags Threshold"
-                        )
-                        batch_general_mcut = gr.Checkbox(
-                            value=False,
-                            label="Use MCut threshold"
-                        )
-                    with gr.Row():
-                        batch_character_thresh = gr.Slider(
-                            0, 1,
-                            step=args.score_slider_step,
-                            value=args.score_character_threshold,
-                            label="Character Tags Threshold"
-                        )
-                        batch_character_mcut = gr.Checkbox(
-                            value=False,
-                            label="Use MCut threshold"
-                        )
-                    batch_submit = gr.Button(value="Start Batch Processing", variant="primary")
-                    batch_output = gr.Textbox(label="Processing Result", lines=20)
+            with gr.Tab("Batch Processing"):
+                with gr.Tabs():
+                    # Danbooru Tags tab
+                    with gr.Tab("Danbooru Tags"):
+                        with gr.Column(variant="panel"):
+                            folder_path = gr.Textbox(
+                                label="Image Folder Path",
+                                placeholder="Enter the folder path containing images",
+                                info="Supports jpg, jpeg, png, webp, webm formats"
+                            )
+                            manual_tags = gr.Textbox(
+                                label="Manual Tags",
+                                placeholder="Enter tags to add, separated by commas (e.g., masterpiece, aesthetic)",
+                                info="These tags will be added to the beginning of all image tags"
+                            )
+                            batch_model = gr.Dropdown(
+                                dropdown_list,
+                                value=SWINV2_MODEL_DSV3_REPO,
+                                label="Model",
+                            )
+                            with gr.Row():
+                                batch_general_thresh = gr.Slider(
+                                    0, 1,
+                                    step=args.score_slider_step,
+                                    value=args.score_general_threshold,
+                                    label="General Tags Threshold"
+                                )
+                                batch_general_mcut = gr.Checkbox(
+                                    value=False,
+                                    label="Use MCut threshold"
+                                )
+                            with gr.Row():
+                                batch_character_thresh = gr.Slider(
+                                    0, 1,
+                                    step=args.score_slider_step,
+                                    value=args.score_character_threshold,
+                                    label="Character Tags Threshold"
+                                )
+                                batch_character_mcut = gr.Checkbox(
+                                    value=False,
+                                    label="Use MCut threshold"
+                                )
+                            batch_submit = gr.Button(value="Start Batch Processing", variant="primary")
+                            batch_output = gr.Textbox(label="Processing Result", lines=20)
 
-                batch_submit.click(
-                    lambda *args: batch_process(predictor, *args),
-                    inputs=[
-                        folder_path,
-                        batch_model,
-                        batch_general_thresh,
-                        batch_general_mcut,
-                        batch_character_thresh,
-                        batch_character_mcut,
-                        manual_tags,
-                    ],
-                    outputs=[batch_output]
-                )
+                        batch_submit.click(
+                            lambda *args: batch_process(predictor, *args),
+                            inputs=[
+                                folder_path,
+                                batch_model,
+                                batch_general_thresh,
+                                batch_general_mcut,
+                                batch_character_thresh,
+                                batch_character_mcut,
+                                manual_tags,
+                            ],
+                            outputs=[batch_output]
+                        )
+                    
+                    # Natural Language (Newbie) tab
+                    with gr.Tab("Natural Language (Newbie)"):
+                        with gr.Column(variant="panel"):
+                            nl_folder_path = gr.Textbox(
+                                label="Image Folder Path",
+                                placeholder="Enter the folder path containing images",
+                                info="Supports jpg, jpeg, png, webp formats"
+                            )
+                            
+                            with gr.Row():
+                                nl_caption_type = gr.Dropdown(
+                                    choices=["Descriptive", "Descriptive (Informal)", "Training Prompt", "MidJourney", 
+                                            "Booru tag list", "Booru-like tag list", "Art Critic", "Product Listing", "Social Media Post"],
+                                    value="Descriptive",
+                                    label="Caption Type"
+                                )
+                                nl_caption_length = gr.Dropdown(
+                                    choices=["any", "very short", "short", "medium-length", "long", "very long"] +
+                                            [str(i) for i in range(20, 261, 10)],
+                                    value="long",
+                                    label="Caption Length"
+                                )
+                            
+                            nl_custom_prompt = gr.Textbox(
+                                label="Custom Prompt (optional)",
+                                placeholder="Enter a custom prompt to override caption type",
+                                info="Leave empty to use the selected caption type",
+                                lines=2
+                            )
+                            
+                            nl_batch_submit = gr.Button(
+                                value="Start JoyCaption Batch Processing", 
+                                variant="primary"
+                            )
+                            nl_batch_output = gr.Textbox(
+                                label="Processing Result", 
+                                lines=20
+                            )
+                        
+                        # Placeholder function - to be implemented later
+                        def nl_batch_process_wrapper(folder, caption_type, caption_length, custom_prompt):
+                            if not folder:
+                                return "Error: Please enter a folder path"
+                            try:
+                                return batch_joy_caption(
+                                    joy_captioner,
+                                    folder,
+                                    caption_type=caption_type,
+                                    caption_length=caption_length,
+                                    custom_prompt=custom_prompt if custom_prompt.strip() else None
+                                )
+                            except Exception as e:
+                                return f"Error during batch processing: {str(e)}"
+                        
+                        nl_batch_submit.click(
+                            nl_batch_process_wrapper,
+                            inputs=[nl_folder_path, nl_caption_type, nl_caption_length, nl_custom_prompt],
+                            outputs=[nl_batch_output]
+                        )
 
-            with gr.TabItem("Batch Aesthetic Processing"):
+            with gr.Tab("Batch Aesthetic Processing"):
                 with gr.Column(variant="panel"):
                     batch_source = gr.Textbox(
                         label="Source Folder Path",
@@ -238,7 +333,7 @@ def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None,
                         outputs=[batch_aesthetic_output]
                     )
             
-            with gr.TabItem("Dataset Validation"):
+            with gr.Tab("Dataset Validation"):
                 with gr.Column(variant="panel"):
                     validate_path = gr.Textbox(
                         label="Dataset Path",
@@ -274,7 +369,7 @@ def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None,
                     outputs=[validate_output]
                 )
             
-            with gr.TabItem("Dataset Merge"):
+            with gr.Tab("Dataset Merge"):
                 with gr.Column(variant="panel"):
                     source_path = gr.Textbox(
                         label="Source Folder Path",
@@ -315,7 +410,7 @@ def create_interface(predictor, validator, aesthetic_scorer, joy_captioner=None,
                         outputs=[merge_output]
                     )
 
-    demo.queue(max_size=10)
+    demo.queue()
     return demo
 
 def launch_interface(predictor, validator, aesthetic_scorer, joy_captioner, args):

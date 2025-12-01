@@ -20,8 +20,8 @@ SWINV2_MODEL_IS_DSV1_REPO = "deepghs/idolsankaku-swinv2-tagger-v1"
 EVA02_LARGE_MODEL_IS_DSV1_REPO = "deepghs/idolsankaku-eva02-large-tagger-v1"
 
 dropdown_list = [
-    PIXAI_TAGGER_V09_REPO,
-    SWINV2_MODEL_DSV3_REPO,
+    SWINV2_MODEL_DSV3_REPO,  # Recommended: Best balance of speed and accuracy
+    PIXAI_TAGGER_V09_REPO,  # PyTorch model with 13k tags
     CONV_MODEL_DSV3_REPO,
     VIT_MODEL_DSV3_REPO,
     VIT_LARGE_MODEL_DSV3_REPO,
